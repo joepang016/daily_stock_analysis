@@ -1919,7 +1919,7 @@ class NotificationService:
         payload = {
             "chat_id": chat_id,
             "text": telegram_text,
-            "parse_mode": None,
+            "parse_mode": 'MarkdownV2',
             "disable_web_page_preview": True
         }
         
