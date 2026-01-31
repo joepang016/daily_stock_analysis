@@ -1874,7 +1874,7 @@ class NotificationService:
         {
             "chat_id": "xxx",
             "text": "消息内容",
-            "parse_mode": "Markdown"
+            "parse_mode": None
         }
         
         Args:
