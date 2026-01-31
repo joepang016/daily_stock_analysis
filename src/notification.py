@@ -1910,47 +1910,75 @@ class NotificationService:
             logger.debug(traceback.format_exc())
             return False
     
-    def _send_telegram_message(self, api_url: str, chat_id: str, text: str) -> bool:
-        """发送单条 Telegram 消息"""
-        # 转换 Markdown 为 Telegram 支持的格式
-        # Telegram 的 Markdown 格式稍有不同，做简单处理
-        telegram_text = self._convert_to_telegram_markdown(text)
-        
+   def _send_telegram_message(self, api_url: str, chat_id: str, text: str) -> bool:
+    """发送单条 Telegram 消息"""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    def escape_markdown_v2(text: str) -> str:
+        """完整逃逸 MarkdownV2 所有保留字元"""
+        # Telegram MarkdownV2 保留字元列表（必須全部逃逸）
+        reserved = r'_ * [ ] ( ) ~ ` > # + - = | { } . !'
+        for char in reserved:
+            text = text.replace(char, f'\\{char}')
+        return text
+
+    # Step 1: 優先嘗試 MarkdownV2 + 逃逸
+    try:
+        safe_text = escape_markdown_v2(text)
         payload = {
             "chat_id": chat_id,
-            "text": telegram_text,
-            "parse_mode": 'MarkdownV2',
-            "disable_web_page_preview": True
+            "text": safe_text,
+            "parse_mode": "MarkdownV2",
+            "disable_web_page_preview": True,
+            # 可選：關閉通知（夜間推送不打擾）
+            # "disable_notification": True,
         }
-        
+
+        logger.debug(f"嘗試 MarkdownV2 發送，文字長度: {len(safe_text)}")
         response = requests.post(api_url, json=payload, timeout=10)
         
         if response.status_code == 200:
             result = response.json()
             if result.get('ok'):
-                logger.info("Telegram 消息发送成功")
+                logger.info("Telegram 消息發送成功 (MarkdownV2)")
                 return True
             else:
-                error_desc = result.get('description', '未知错误')
-                logger.error(f"Telegram 返回错误: {error_desc}")
-                
-                # 如果 Markdown 解析失败，尝试纯文本发送
-                if 'parse' in error_desc.lower() or 'markdown' in error_desc.lower():
-                    logger.info("尝试使用纯文本格式重新发送...")
-                    payload['parse_mode'] = None
-                    payload['text'] = text  # 使用原始文本
-                    del payload['parse_mode']
-                    
-                    response = requests.post(api_url, json=payload, timeout=10)
-                    if response.status_code == 200 and response.json().get('ok'):
-                        logger.info("Telegram 消息发送成功（纯文本）")
-                        return True
-                
-                return False
+                error_desc = result.get('description', '未知錯誤')
+                logger.warning(f"MarkdownV2 失敗: {error_desc}")
         else:
-            logger.error(f"Telegram 请求失败: HTTP {response.status_code}")
-            logger.error(f"响应内容: {response.text}")
-            return False
+            logger.error(f"MarkdownV2 HTTP 失敗: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        logger.exception(f"MarkdownV2 發送異常: {e}")
+
+    # Step 2: fallback 到純文字（絕對成功）
+    logger.info("切換到純文字模式重新發送...")
+    payload = {
+        "chat_id": chat_id,
+        "text": text,  # 使用原始文字（純文字不需要逃逸）
+        "disable_web_page_preview": True,
+        # "disable_notification": True,  # 可選
+    }
+    # 重要：純文字模式不要帶 parse_mode
+    if "parse_mode" in payload:
+        del payload["parse_mode"]
+
+    try:
+        response = requests.post(api_url, json=payload, timeout=10)
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('ok'):
+                logger.info("Telegram 消息發送成功 (純文字)")
+                return True
+            else:
+                logger.error(f"純文字模式仍失敗: {result.get('description', '未知錯誤')}")
+        else:
+            logger.error(f"純文字 HTTP 失敗: {response.status_code} - {response.text}")
+    except Exception as e:
+        logger.exception(f"純文字發送異常: {e}")
+
+    return False
     
     def _send_telegram_chunked(self, api_url: str, chat_id: str, content: str, max_length: int) -> bool:
         """分段发送长 Telegram 消息"""
