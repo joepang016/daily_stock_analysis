@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ===================================
-A股自选股智能分析系统 - 主调度程序
+自选股智能分析系统 - 主调度程序
 ===================================
 
 职责：
@@ -9,6 +9,7 @@ A股自选股智能分析系统 - 主调度程序
 2. 实现低并发的线程池调度
 3. 全局异常处理，确保单股失败不影响整体
 4. 提供命令行入口
+5. 根据市场区域动态显示系统名称（A股/港股/美股）
 
 使用方式：
     python main.py              # 正常运行
@@ -123,14 +124,14 @@ logger = logging.getLogger(__name__)
 def parse_arguments() -> argparse.Namespace:
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description='A股自选股智能分析系统',
+        description='自选股智能分析系统（支持A股/港股/美股）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例:
   python main.py                    # 正常运行
   python main.py --debug            # 调试模式
   python main.py --dry-run          # 仅获取数据，不进行 AI 分析
-  python main.py --stocks 600519,000001  # 指定分析特定股票
+  python main.py --stocks hk600519,hk000001  # 指定分析特定股票
   python main.py --no-notify        # 不发送推送通知
   python main.py --single-notify    # 启用单股推送模式（每分析完一只立即推送）
   python main.py --schedule         # 启用定时任务模式
@@ -219,7 +220,7 @@ def run_full_analysis(
     这是定时任务调用的主函数
     """
     try:
-        # 命令行参数 --single-notify 覆盖配置（#55）
+        # 命令行参数 --single-notify 覆盖配置
         if getattr(args, 'single_notify', False):
             config.single_stock_notify = True
         
@@ -276,14 +277,22 @@ def run_full_analysis(
                 # 1. 准备标题 "01-01 13:01大盘复盘"
                 tz_cn = timezone(timedelta(hours=8))
                 now = datetime.now(tz_cn)
-                doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 大盘复盘"
+                
+                # ✅ 修复：根据市场区域动态生成标题
+                market_names = {
+                    'cn': 'A股',
+                    'hk': '港股', 
+                    'us': '美股'
+                }
+                market_name = market_names.get(config.market_region, '大盘')
+                doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} {market_name}大盘复盘"
 
                 # 2. 准备内容 (拼接个股分析和大盘复盘)
                 full_content = ""
 
                 # 添加大盘复盘内容（如果有）
                 if market_report:
-                    full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
+                    full_content += f"# 📈 {market_name}大盘复盘\n\n{market_report}\n\n---\n\n"
 
                 # 添加个股决策仪表盘（使用 NotificationService 生成）
                 if results:
@@ -295,7 +304,7 @@ def run_full_analysis(
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
                     # 可选：将文档链接也推送到群里
-                    pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}")
+                    pipeline.notifier.send(f"[{now.strftime('%Y-%m-%d %H:%M')}] {market_name}复盘文档创建成功: {doc_url}")
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
@@ -354,7 +363,16 @@ def main() -> int:
     setup_logging(debug=args.debug, log_dir=config.log_dir)
     
     logger.info("=" * 60)
-    logger.info("A股自选股智能分析系统 启动")
+    
+    # ✅ 修复：动态显示系统名称（第152行）
+    market_names = {
+        'cn': 'A股',
+        'hk': '港股',
+        'us': '美股'
+    }
+    market_name = market_names.get(config.market_region, '自选股')
+    logger.info(f"{market_name}自选股智能分析系统 启动")
+    logger.info(f"市场区域: {config.market_region.upper()}")
     logger.info(f"运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     
@@ -368,6 +386,8 @@ def main() -> int:
     if args.stocks:
         stock_codes = [code.strip() for code in args.stocks.split(',') if code.strip()]
         logger.info(f"使用命令行指定的股票列表: {stock_codes}")
+    else:
+        logger.info(f"自选股列表: {config.stock_list}")
     
     # === 启动 WebUI (如果启用) ===
     # 优先级: 命令行参数 > 配置文件
